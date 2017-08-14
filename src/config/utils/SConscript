@@ -55,6 +55,7 @@ utils_scripts = [
   'issu_process.sh',
   'qosmap.py',
   'rbacutil.py',
+  'chownproj.py', 
 ]
 
 for utils in utils_scripts:

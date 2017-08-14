@@ -62,7 +62,7 @@ def parse_args(args_str):
         'logging_conf': '',
         'logger_class': None,
         'multi_tenancy': None,
-        'aaa_mode': cfgm_common.AAA_MODE_DEFAULT_VALUE,
+        'aaa_mode': None,
         'disc_server_ip': None,
         'disc_server_port': '5998',
         'zk_server_ip': '127.0.0.1:2181',
@@ -98,6 +98,7 @@ def parse_args(args_str):
         'ifmap_max_message_size': 1024*1024,
         'ifmap_health_check_interval': '60', # in seconds
         'override_rpf_default_by': None,
+        'max_request_size': 1024000,
     }
     # ssl options
     secopts = {
@@ -371,6 +372,8 @@ def parse_args(args_str):
         nargs="?",
         help="RPF default value to use when creating network"
     )
+    parser.add_argument("--max_request_size", type=int,
+            help="Maximum size of bottle requests served by api server")
     args_obj, remaining_argv = parser.parse_known_args(remaining_argv)
     args_obj.conf_file = args.conf_file
     args_obj.config_sections = config

@@ -57,7 +57,6 @@ threading._DummyThread._Thread__stop = lambda x: 42
 CONFIG_VERSION = '1.0'
 
 import bottle
-bottle.BaseRequest.MEMFILE_MAX = 1024000
 
 import utils
 import context
@@ -145,8 +144,6 @@ _ACTION_RESOURCES = [
      'method': 'POST', 'method_name': 'obj_chown_http_post'},
     {'uri': '/chmod', 'link_name': 'chmod',
      'method': 'POST', 'method_name': 'obj_chmod_http_post'},
-    {'uri': '/multi-tenancy', 'link_name': 'multi-tenancy',
-     'method': 'PUT', 'method_name': 'mt_http_put'},
     {'uri': '/aaa-mode', 'link_name': 'aaa-mode',
      'method': 'PUT', 'method_name': 'aaa_mode_http_put'},
 ]
@@ -1352,15 +1349,18 @@ class VncApiServer(object):
             args_str = ' '.join(sys.argv[1:])
         self._parse_args(args_str)
 
-        # aaa-mode is ignored if multi_tenancy is configured by user
-        if self._args.multi_tenancy is None:
-            # MT unconfigured by user - determine from aaa-mode
+        # set the max size of the api requests
+        bottle.BaseRequest.MEMFILE_MAX = self._args.max_request_size
+
+        # multi_tenancy is ignored if aaa_mode is configured by user
+        if self._args.aaa_mode is not None:
             if self.aaa_mode not in cfgm_common.AAA_MODE_VALID_VALUES:
                 self.aaa_mode = cfgm_common.AAA_MODE_DEFAULT_VALUE
-            self._args.multi_tenancy = self.aaa_mode != 'no-auth'
-        else:
-            # MT configured by user - ignore aaa-mode
+        elif self._args.multi_tenancy is not None:
+            # MT configured by user - determine from aaa-mode
             self.aaa_mode = "cloud-admin" if self._args.multi_tenancy else "no-auth"
+        else:
+            self.aaa_mode = "cloud-admin"
 
         # set python logging level from logging_level cmdline arg
         if not self._args.logging_conf:
@@ -1439,9 +1439,7 @@ class VncApiServer(object):
                        '/virtual-network/%s/subnet-ip-count',
                        'virtual-network-subnet-ip-count', 'POST'))
 
-        # Enable/Disable multi tenancy
-        self.route('/multi-tenancy', 'GET', self.mt_http_get)
-        self.route('/multi-tenancy', 'PUT', self.mt_http_put)
+        # Enable/Disable aaa mode
         self.route('/aaa-mode',      'GET', self.aaa_mode_http_get)
         self.route('/aaa-mode',      'PUT', self.aaa_mode_http_put)
 
@@ -1486,6 +1484,7 @@ class VncApiServer(object):
         self._sandesh.trace_buffer_create(name="MessageBusNotifyTraceBuf",
                                           size=1000)
         self._sandesh.trace_buffer_create(name="IfmapTraceBuf", size=1000)
+        VncGreenlet.register_sandesh_handler()
 
         self._sandesh.set_logging_params(
             enable_local_log=self._args.log_local,
@@ -1524,7 +1523,7 @@ class VncApiServer(object):
         self._permissions = vnc_perms.VncPermissions(self, self._args)
         if self.is_rbac_enabled():
             self._create_default_rbac_rule()
-        if self.is_multi_tenancy_set():
+        if self.is_auth_needed():
             self._generate_obj_view_links()
 
         if os.path.exists('/usr/bin/contrail-version'):
@@ -1781,7 +1780,7 @@ class VncApiServer(object):
         return self._args.auth is None
 
     def is_admin_request(self):
-        if not self.is_multi_tenancy_set():
+        if not self.is_auth_needed():
             return True
 
         env = bottle.request.headers.environ
@@ -1792,7 +1791,7 @@ class VncApiServer(object):
         return False
 
     def get_auth_headers_from_token(self, request, token):
-        if self.is_auth_disabled() or not self.is_multi_tenancy_set():
+        if self.is_auth_disabled() or not self.is_auth_needed():
             return {}
 
         return self._auth_svc.get_auth_headers_from_token(request, token)
@@ -1854,7 +1853,7 @@ class VncApiServer(object):
     # end documentation_http_get
 
     def obj_perms_http_get(self):
-        if self.is_auth_disabled() or not self.is_multi_tenancy_set():
+        if self.is_auth_disabled() or not self.is_auth_needed():
             result = {
                 'token_info': None,
                 'is_cloud_admin_role': False,
@@ -2655,6 +2654,7 @@ class VncApiServer(object):
                                          --ifmap_listen_ip 0.0.0.0
                                          --ifmap_listen_port 8443
                                          --ifmap_credentials control:secret
+                                         --max_request_size 1024000
         '''
         self._args, _ = utils.parse_args(args_str)
     # end _parse_args
@@ -2877,6 +2877,8 @@ class VncApiServer(object):
 
         if int(self._args.worker_id) == 0:
             self._db_conn.db_resync()
+        else:
+            self._db_conn._db_resync_done.set()
 
         # make default ipam available across tenants for backward compatability
         obj_type = 'network_ipam'
@@ -3286,7 +3288,7 @@ class VncApiServer(object):
     # uuid is parent's for collections
     def _http_get_common(self, request, uuid=None):
         # TODO check api + resource perms etc.
-        if self.is_multi_tenancy_set() and uuid:
+        if self.is_auth_needed() and uuid:
             if isinstance(uuid, list):
                 for u_id in uuid:
                     ok, result = self._permissions.check_perms_read(request,
@@ -3349,9 +3351,8 @@ class VncApiServer(object):
             log.send(sandesh=self._sandesh)
 
         # TODO check api + resource perms etc.
-        if self.is_multi_tenancy_set():
+        if self.is_auth_needed():
             return self._permissions.check_perms_write(request, obj_uuid)
-
         return (True, '')
     # end _http_put_common
 
@@ -3382,7 +3383,7 @@ class VncApiServer(object):
         log.send(sandesh=self._sandesh)
 
         # TODO check api + resource perms etc.
-        if not self.is_multi_tenancy_set() or not parent_type:
+        if not self.is_auth_needed() or not parent_type:
             return (True, '')
 
         """
@@ -3578,45 +3579,12 @@ class VncApiServer(object):
         return result
     # end vn_subnet_ip_count_http_post
 
-    def set_mt(self, multi_tenancy):
-        pipe_start_app = self.get_pipe_start_app()
-        try:
-            pipe_start_app.set_mt(multi_tenancy)
-        except AttributeError:
-            pass
-        self._args.multi_tenancy = multi_tenancy
-    # end
-
     # check if token validatation needed
-    def is_multi_tenancy_set(self):
+    def is_auth_needed(self):
         return self.aaa_mode != 'no-auth'
 
     def is_rbac_enabled(self):
         return self.aaa_mode == 'rbac'
-
-    def mt_http_get(self):
-        pipe_start_app = self.get_pipe_start_app()
-        mt = self.is_multi_tenancy_set()
-        try:
-            mt = pipe_start_app.get_mt()
-        except AttributeError:
-            pass
-        return {'enabled': mt}
-    # end
-
-    def mt_http_put(self):
-        multi_tenancy = get_request().json['enabled']
-        user_token = get_request().get_header('X-Auth-Token')
-        if user_token is None:
-            raise cfgm_common.exceptions.HttpError(403, " Permission denied")
-
-        data = self._auth_svc.verify_signed_token(user_token)
-        if data is None:
-            raise cfgm_common.exceptions.HttpError(403, " Permission denied")
-
-        self.set_mt(multi_tenancy)
-        return {'enabled': self.is_multi_tenancy_set()}
-    # end
 
     @property
     def aaa_mode(self):

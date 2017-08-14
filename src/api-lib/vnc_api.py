@@ -1121,6 +1121,8 @@ class VncApi(object):
     def resource_list(self, obj_type, parent_id=None, parent_fq_name=None,
                       back_ref_id=None, obj_uuids=None, fields=None,
                       detail=False, count=False, filters=None):
+        if obj_uuids == [] or back_ref_id == []:
+            return []
         if not obj_type:
             raise ResourceTypeUnknownError(obj_type)
 
@@ -1276,12 +1278,6 @@ class VncApi(object):
         content = self._request_server(rest.OP_POST,
             self._action_uri['chmod'], data=json.dumps(payload))
         return content
-
-    def set_multi_tenancy(self, enabled):
-        url = self._action_uri['multi-tenancy']
-        data = {'enabled': enabled}
-        content = self._request_server(rest.OP_PUT, url, json.dumps(data))
-        return json.loads(content)
 
     def set_aaa_mode(self, mode):
         if mode not in cfgm_common.AAA_MODE_VALID_VALUES:

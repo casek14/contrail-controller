@@ -1660,10 +1660,9 @@ void BgpIfmapRoutingPolicyConfig::RemoveInstance(BgpIfmapInstanceConfig *rti) {
 }
 
 
-static void BuildPolicyTerm(autogen::PolicyTermType cfg_term,
-    RoutingPolicyTerm *term) {
+static void BuildPolicyTermConfig(autogen::PolicyTermType cfg_term,
+    RoutingPolicyTermConfig *term) {
     term->match.protocols_match = cfg_term.term_match_condition.protocol;
-    term->match.community_match = cfg_term.term_match_condition.community;
     BOOST_FOREACH(const autogen::PrefixMatchType &prefix_match,
                   cfg_term.term_match_condition.prefix) {
         PrefixMatchConfig match;
@@ -1671,6 +1670,16 @@ static void BuildPolicyTerm(autogen::PolicyTermType cfg_term,
         match.prefix_match_type = prefix_match.prefix_type.empty() ?
             "exact" : prefix_match.prefix_type;
         term->match.prefixes_to_match.push_back(match);
+    }
+    term->match.community_match_all =
+        cfg_term.term_match_condition.community_match_all;
+    if (!cfg_term.term_match_condition.community_list.empty()) {
+        term->match.community_match =
+            cfg_term.term_match_condition.community_list;
+    }
+    if (!cfg_term.term_match_condition.community.empty()) {
+        term->match.community_match.push_back(
+            cfg_term.term_match_condition.community);
     }
 
     BOOST_FOREACH(const string community,
@@ -1695,13 +1704,13 @@ static void BuildPolicyTerm(autogen::PolicyTermType cfg_term,
         term->action.action = RoutingPolicyActionConfig::ACCEPT;
 }
 
-static void BuildPolicyTerms(BgpRoutingPolicyConfig *policy_cfg,
+static void BuildPolicyTermsConfig(BgpRoutingPolicyConfig *policy_cfg,
     const autogen::RoutingPolicy *policy) {
     vector<autogen::PolicyTermType> terms = policy->entries();
     BOOST_FOREACH(autogen::PolicyTermType cfg_term, terms) {
-        RoutingPolicyTerm policy_term;
-        BuildPolicyTerm(cfg_term, &policy_term);
-        policy_cfg->add_term(policy_term);
+        RoutingPolicyTermConfig policy_term_cfg;
+        BuildPolicyTermConfig(cfg_term, &policy_term_cfg);
+        policy_cfg->add_term(policy_term_cfg);
     }
 }
 
@@ -1710,7 +1719,7 @@ void BgpIfmapRoutingPolicyConfig::Update(BgpIfmapConfigManager *manager,
     routing_policy_.reset(policy);
     data_.Clear();
     if (policy) {
-        BuildPolicyTerms(&data_, policy);
+        BuildPolicyTermsConfig(&data_, policy);
     }
 }
 
