@@ -497,6 +497,7 @@ BgpXmppChannel::BgpXmppChannel(XmppChannel *channel,
                 TaskScheduler::GetInstance()->GetTaskId("xmpp::StateMachine"),
                 channel->GetTaskInstance());
     }
+    channel_->RegisterReferer(peer_id_);
     channel_->RegisterReceive(peer_id_,
          boost::bind(&BgpXmppChannel::ReceiveUpdate, this, _1));
     BGP_LOG_PEER(Event, peer_.get(), SandeshLevel::SYS_INFO, BGP_LOG_FLAG_ALL,
@@ -2190,7 +2191,7 @@ bool BgpXmppChannel::EndOfRibReceiveTimerExpired() {
             BGP_LOG_PEER(Message, Peer(), SandeshLevel::SYS_INFO,
                          BGP_LOG_FLAG_ALL, BGP_PEER_DIR_IN,
                          "EndOfRib Receive timer rescheduled to fire after " <<
-                         kEndOfRibSendRetryTime << " second(s) ");
+                         kEndOfRibSendRetryTime << " second(s)");
             return true;
         }
     }
@@ -2222,9 +2223,9 @@ bool BgpXmppChannel::EndOfRibSendTimerExpired() {
                 manager()->bgp_server()->IsServerStartingUp()) {
             eor_send_timer_->Reschedule(kEndOfRibSendRetryTime * 1000);
             BGP_LOG_PEER(Message, Peer(), SandeshLevel::SYS_INFO,
-                         BGP_LOG_FLAG_ALL, BGP_PEER_DIR_IN,
+                         BGP_LOG_FLAG_ALL, BGP_PEER_DIR_OUT,
                          "EndOfRib Send timer rescheduled to fire after " <<
-                         kEndOfRibSendRetryTime << "second(s) ");
+                         kEndOfRibSendRetryTime << " second(s)");
             return true;
         }
     }
@@ -2363,7 +2364,7 @@ void BgpXmppChannel::ReceiveUpdate(const XmppStanza::XmppMessage *msg) {
     }
 }
 
-bool BgpXmppChannelManager::DeleteExecutor(BgpXmppChannel *channel) {
+bool BgpXmppChannelManager::DeleteChannel(BgpXmppChannel *channel) {
     if (!channel->deleted()) {
         channel->set_deleted(true);
         delete channel;
@@ -2377,7 +2378,7 @@ BgpXmppChannelManager::BgpXmppChannelManager(XmppServer *xmpp_server,
     : xmpp_server_(xmpp_server),
       bgp_server_(server),
       queue_(TaskScheduler::GetInstance()->GetTaskId("bgp::Config"), 0,
-          boost::bind(&BgpXmppChannelManager::DeleteExecutor, this, _1)),
+          boost::bind(&BgpXmppChannelManager::DeleteChannel, this, _1)),
       id_(-1),
       asn_listener_id_(-1),
       identifier_listener_id_(-1) {

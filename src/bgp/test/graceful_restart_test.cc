@@ -274,17 +274,40 @@ PeerCloseManager::Stats PeerCloseManagerTest::last_stats_;
 class BgpXmppChannelManagerMock : public BgpXmppChannelManager {
 public:
     BgpXmppChannelManagerMock(XmppServer *x, BgpServer *b) :
-        BgpXmppChannelManager(x, b), channel_(NULL) { }
+        BgpXmppChannelManager(x, b), channel_(NULL), bgp_xmpp_channels_(NULL) {}
 
     virtual BgpXmppChannel *CreateChannel(XmppChannel *channel) {
         channel_ = new BgpXmppChannel(channel, bgp_server_, this);
         return channel_;
     }
 
+    virtual bool DeleteChannel(BgpXmppChannel *channel) {
+        if (bgp_xmpp_channels_) {
+            tbb::mutex::scoped_lock lock(mutex_);
+            std::vector<BgpXmppChannel *>::iterator iter;
+            iter = std::find(bgp_xmpp_channels_->begin(),
+                             bgp_xmpp_channels_->end(), channel);
+            if (iter != bgp_xmpp_channels_->end())
+                *iter = NULL;
+        }
+        return BgpXmppChannelManager::DeleteChannel(channel);
+    }
+
+    void set_bgp_xmpp_channels(vector<BgpXmppChannel *> *bgp_xmpp_channels) {
+        TASK_UTIL_EXPECT_NE_MSG(static_cast<BgpXmppChannel *>(NULL), channel_,
+                                "Waiting for channel creation");
+        tbb::mutex::scoped_lock lock(mutex_);
+        bgp_xmpp_channels_ = bgp_xmpp_channels;
+        bgp_xmpp_channels_->push_back(channel_);
+        channel_ = NULL;
+    }
+
     BgpXmppChannel *channel_;
+    std::vector<BgpXmppChannel *> *bgp_xmpp_channels_;
+    tbb::mutex mutex_;
 };
 
-typedef std::tr1::tuple<int, int, int, int, int> TestParams;
+typedef std::tr1::tuple<int, int, int, int, int, bool> TestParams;
 
 class SandeshServerTest : public SandeshServer {
 public:
@@ -307,6 +330,7 @@ typedef std::map<XmppServerTest *, std::vector<test::NetworkAgentMock *> >
     XmppAgentsType;
 XmppAgentsType xmpp_server_agents_;
 
+typedef std::tr1::tuple<int, int, int, int, int, bool, bool> TestParams;
 class GracefulRestartTest : public ::testing::TestWithParam<TestParams> {
 protected:
     GracefulRestartTest() : thread_(&evm_) { }
@@ -438,6 +462,7 @@ protected:
     string GetEnetPrefix(string inet_prefix) const;
     void ProcessFlippingPeers(int &total_routes, int remaining_instances,
         vector<GRTestParams> &n_flipping_peers);
+    void SetXmppGRHelperMode(string flag);
 
     std::vector<GRTestParams> n_flipped_agents_;
     std::vector<GRTestParams> n_flipped_peers_;
@@ -445,6 +470,8 @@ protected:
     std::vector<BgpPeerTest *> n_down_from_peers_;
     std::vector<int> instances_to_delete_before_gr_;
     std::vector<int> instances_to_delete_during_gr_;
+    bool xmpp_auth_enabled_;
+    bool disable_gr_config_in_between_;
 };
 
 static int d_wait_for_idle_ = 30; // Seconds
@@ -473,7 +500,14 @@ void GracefulRestartTest::SetUp() {
     for (int i = 0; i <= n_peers_; i++) {
         bgp_servers_.push_back(new BgpServerTest(&evm_,
                     "RTR" + boost::lexical_cast<string>(i)));
-        xmpp_servers_.push_back(new XmppServerTest(&evm_, XMPP_CONTROL_SERV));
+        XmppChannelConfig xs_cfg(false);
+        xs_cfg.auth_enabled = xmpp_auth_enabled_;
+        xs_cfg.path_to_server_cert =
+            "controller/src/xmpp/testdata/server-build02.pem";
+        xs_cfg.path_to_server_priv_key =
+            "controller/src/xmpp/testdata/server-build02.key";
+        xmpp_servers_.push_back(new XmppServerTest(&evm_, XMPP_CONTROL_SERV,
+                                                   &xs_cfg));
         channel_managers_.push_back(new BgpXmppChannelManagerMock(
                                         xmpp_servers_[i], bgp_servers_[i]));
 
@@ -670,6 +704,18 @@ void GracefulRestartTest::VerifyRoutes(int count) {
     }
 }
 
+void GracefulRestartTest::SetXmppGRHelperMode(string flag) {
+    ostringstream os;
+    os << "<config><global-system-config><graceful-restart-parameters>";
+    os << "<xmpp-helper-enable>" << flag << "</xmpp-helper-enable>";
+    os << "<bgp-helper-enable>" << flag << "</bgp-helper-enable>";
+    os << "</graceful-restart-parameters></global-system-config></config>";
+    string config = os.str();
+    for (int i = 0; i <= n_peers_; i++)
+        bgp_servers_[i]->Configure(config.c_str());
+    WaitForIdle();
+}
+
 string GracefulRestartTest::GetConfig(bool delete_config) {
     ostringstream out;
 
@@ -730,7 +776,10 @@ string GracefulRestartTest::GetConfig(bool delete_config) {
         out << "</routing-instance>\n";
     }
 
-    out << "</config>";
+    if (delete_config)
+        out << "</delete>";
+    else
+        out << "</config>";
     BGP_DEBUG_UT("Applying config" << out.str());
 
     return out.str();
@@ -763,9 +812,17 @@ bool GracefulRestartTest::IsReady(bool ready) {
 
 void GracefulRestartTest::WaitForAgentToBeEstablished(
         test::NetworkAgentMock *agent) {
-    TASK_UTIL_EXPECT_TRUE(agent->IsChannelReady());
+    TASK_UTIL_EXPECT_TRUE(agent->IsReady());
     TASK_UTIL_EXPECT_TRUE(agent->IsEstablished());
     TASK_UTIL_EXPECT_TRUE(bgp_xmpp_channels_[agent->id()]->Peer()->IsReady());
+
+    // Make sure that keep-alive and hold timers are running.
+    const Timer *timer = bgp_xmpp_channels_[agent->id()]->channel()->
+        connection()->keepalive_timer();
+    TASK_UTIL_EXPECT_TRUE(timer->running());
+    timer = bgp_xmpp_channels_[agent->id()]->channel()->connection()->
+        state_machine()->hold_timer();
+    TASK_UTIL_EXPECT_TRUE(timer->running());
 }
 
 void GracefulRestartTest::WaitForPeerToBeEstablished(BgpPeerTest *peer) {
@@ -819,16 +876,12 @@ void GracefulRestartTest::CreateAgents() {
         test::NetworkAgentMock *agent = new test::NetworkAgentMock(&evm_,
             "agent" + boost::lexical_cast<string>(i) +
                 "@vnsw.contrailsystems.com",
-            xmpp_server_->GetPort(), prefix.ip4_addr().to_string());
+            xmpp_server_->GetPort(), prefix.ip4_addr().to_string(),
+            "127.0.0.1", xmpp_auth_enabled_);
         agent->set_id(i);
         xmpp_agents_.push_back(agent);
         WaitForIdle();
-
-        TASK_UTIL_EXPECT_NE_MSG(static_cast<BgpXmppChannel *>(NULL),
-                          channel_manager_->channel_,
-                          "Waiting for channel_manager_->channel_ to be set");
-        bgp_xmpp_channels_.push_back(channel_manager_->channel_);
-        channel_manager_->channel_ = NULL;
+        channel_manager_->set_bgp_xmpp_channels(&bgp_xmpp_channels_);
         prefix = task_util::Ip4PrefixIncrement(prefix);
     }
 
@@ -841,7 +894,8 @@ void GracefulRestartTest::CreateAgents() {
             test::NetworkAgentMock *agent = new test::NetworkAgentMock(&evm_,
                 "dummy_agent" + boost::lexical_cast<string>(i) +
                 "@vnsw.contrailsystems.com",
-                xmpp_servers_[j]->GetPort(), prefix.ip4_addr().to_string());
+                xmpp_servers_[j]->GetPort(), prefix.ip4_addr().to_string(),
+                "127.0.0.1", xmpp_auth_enabled_);
             xmpp_server_agents_[xmpp_servers_[j]].push_back(agent);
             prefix = task_util::Ip4PrefixIncrement(prefix);
         }
@@ -1217,11 +1271,15 @@ void GracefulRestartTest::FireGRTimer(PeerCloseManagerTest *pc, bool is_ready) {
 }
 
 void GracefulRestartTest::FireGRTimer(BgpPeerTest *peer) {
+    if (!peer)
+        return;
     FireGRTimer(dynamic_cast<PeerCloseManagerTest *>(peer->close_manager()),
                 peer->IsReady());
 }
 
 void GracefulRestartTest::FireGRTimer(BgpXmppChannel *channel) {
+    if (!channel)
+        return;
     FireGRTimer(dynamic_cast<PeerCloseManagerTest *>(channel->close_manager()),
                 channel->Peer()->IsReady());
 }
@@ -1250,6 +1308,8 @@ void GracefulRestartTest::InitParams() {
     n_agents_    = ::std::tr1::get<2>(GetParam());
     n_peers_     = ::std::tr1::get<3>(GetParam());
     n_targets_   = ::std::tr1::get<4>(GetParam());
+    xmpp_auth_enabled_ = ::std::tr1::get<5>(GetParam());
+    disable_gr_config_in_between_ = ::std::tr1::get<6>(GetParam());
 }
 
 // Bring up n_agents_ in n_instances_ and advertise
@@ -1386,7 +1446,8 @@ void GracefulRestartTest::ProcessFlippingAgents(int &total_routes,
         if (gr_test_param.should_send_eor() && agent->IsEstablished()) {
             agent->SendEorMarker();
         } else {
-            PeerCloseManager *pc = bgp_xmpp_channels_[agent->id()]->close_manager();
+            PeerCloseManager *pc =
+                bgp_xmpp_channels_[agent->id()]->close_manager();
 
             // If the session is down and TCP down event was meant to be skipped
             // then we do not expect control-node to be unaware of it. Hold
@@ -1538,11 +1599,12 @@ void GracefulRestartTest::ProcessFlippingPeers(int &total_routes,
 }
 
 void GracefulRestartTest::GracefulRestartTestRun () {
-    int total_routes = n_instances_ * (n_agents_ + n_peers_) * n_routes_;
+    int total_xmpp_routes = n_instances_ * n_agents_ * n_routes_;
+    int total_bgp_routes = n_instances_ * n_peers_ * n_routes_;
 
     //  Verify that n_agents_ * n_instances_ * n_routes_ routes are received in
     //  agent in each instance
-    VerifyReceivedXmppRoutes(total_routes);
+    VerifyReceivedXmppRoutes(total_xmpp_routes + total_bgp_routes);
 
     vector<test::NetworkAgentMock *> dont_unsubscribe =
         vector<test::NetworkAgentMock *>();
@@ -1550,7 +1612,9 @@ void GracefulRestartTest::GracefulRestartTestRun () {
     DeleteRoutingInstances(instances_to_delete_before_gr_, dont_unsubscribe);
     int remaining_instances = n_instances_;
     remaining_instances -= instances_to_delete_before_gr_.size();
-    total_routes -= n_routes_ * (n_agents_ + n_peers_) *
+    total_xmpp_routes -= n_routes_ * n_agents_ *
+                    instances_to_delete_before_gr_.size();
+    total_bgp_routes -= n_routes_ * n_peers_ *
                     instances_to_delete_before_gr_.size();
 
     // Subset of agents go down permanently (Triggered from agents)
@@ -1559,14 +1623,14 @@ void GracefulRestartTest::GracefulRestartTestRun () {
         agent->SessionDown();
         dont_unsubscribe.push_back(agent);
         TASK_UTIL_EXPECT_FALSE(agent->IsEstablished());
-        total_routes -= remaining_instances * n_routes_;
+        total_xmpp_routes -= remaining_instances * n_routes_;
     }
 
     // Subset of peers go down permanently (Triggered from peers)
     BOOST_FOREACH(BgpPeerTest *peer, n_down_from_peers_) {
         WaitForPeerToBeEstablished(peer);
         BgpPeerDown(peer, TcpSession::EVENT_NONE);
-        total_routes -= remaining_instances * n_routes_;
+        total_bgp_routes -= remaining_instances * n_routes_;
     }
 
     // Divide flipped agents into two parts. Agents in the first part flip
@@ -1602,7 +1666,7 @@ void GracefulRestartTest::GracefulRestartTestRun () {
         TASK_UTIL_EXPECT_FALSE(agent->IsEstablished());
         TASK_UTIL_EXPECT_EQ(TcpSession::EVENT_NONE,
                             XmppStateMachineTest::get_skip_tcp_event());
-        total_routes -= remaining_instances * n_routes_;
+        total_xmpp_routes -= remaining_instances * n_routes_;
 
     }
 
@@ -1611,7 +1675,7 @@ void GracefulRestartTest::GracefulRestartTestRun () {
         BgpPeerTest *peer = gr_test_param.peer;
         WaitForPeerToBeEstablished(peer);
         BgpPeerDown(peer, gr_test_param.skip_tcp_event);
-        total_routes -= remaining_instances * n_routes_;
+        total_bgp_routes -= remaining_instances * n_routes_;
     }
 
     // Subset of agents flip (Triggered from agents)
@@ -1622,7 +1686,7 @@ void GracefulRestartTest::GracefulRestartTestRun () {
         agent->SessionDown();
         dont_unsubscribe.push_back(agent);
         TASK_UTIL_EXPECT_FALSE(agent->IsEstablished());
-        total_routes -= remaining_instances * n_routes_;
+        total_xmpp_routes -= remaining_instances * n_routes_;
     }
 
     // Subset of peers flip (Triggered from peers)
@@ -1630,7 +1694,7 @@ void GracefulRestartTest::GracefulRestartTestRun () {
         BgpPeerTest *peer = gr_test_param.peer;
         WaitForPeerToBeEstablished(peer);
         BgpPeerDown(peer, gr_test_param.skip_tcp_event);
-        total_routes -= remaining_instances * n_routes_;
+        total_bgp_routes -= remaining_instances * n_routes_;
     }
 
     // Delete some of the routing-instances when the agent is still down.
@@ -1639,11 +1703,11 @@ void GracefulRestartTest::GracefulRestartTestRun () {
     DeleteRoutingInstances(instances_to_delete_during_gr_, dont_unsubscribe);
 
     // Account for agents (which do not flip) who usubscribe explicitly
-    total_routes -= n_routes_ *
+    total_xmpp_routes -= n_routes_ *
         (n_agents_ - n_flipped_agents.size() - n_flipping_agents.size() -
          n_down_from_agents_.size()) * instances_to_delete_during_gr_.size();
 
-    total_routes -= n_routes_ *
+    total_bgp_routes -= n_routes_ *
         (n_peers_ - n_flipped_peers.size() - n_flipping_peers.size() -
          n_down_from_peers_.size()) * instances_to_delete_during_gr_.size();
 
@@ -1699,7 +1763,7 @@ void GracefulRestartTest::GracefulRestartTestRun () {
                 agent->AddInet6Route(instance_name, inet6_prefix.ToString(),
                                      GetNextHops(agent, instance_id));
             }
-            total_routes += nroutes;
+            total_xmpp_routes += nroutes;
         }
     }
 
@@ -1721,7 +1785,7 @@ void GracefulRestartTest::GracefulRestartTestRun () {
             // Subset of routes are [re]advertised after restart
             int nroutes = gr_test_param.nroutes[i];
             ProcessVpnRoute(peer, instance_id, nroutes, true);
-            total_routes += nroutes;
+            total_bgp_routes += nroutes;
         }
     }
 
@@ -1746,10 +1810,18 @@ void GracefulRestartTest::GracefulRestartTestRun () {
     }
 
     // Process agents which keep flipping and trigger LLGR..
-    ProcessFlippingAgents(total_routes, remaining_instances, n_flipping_agents);
+    ProcessFlippingAgents(total_xmpp_routes, remaining_instances,
+                          n_flipping_agents);
 
     // Process peers which keep flipping and trigger LLGR..
-    ProcessFlippingPeers(total_routes, remaining_instances, n_flipping_peers);
+    ProcessFlippingPeers(total_bgp_routes, remaining_instances,
+                         n_flipping_peers);
+
+    // Disable XMPP GR Helper mode in configuration.
+    if (disable_gr_config_in_between_) {
+        SetXmppGRHelperMode("false");
+        total_xmpp_routes = 0;
+    }
 
     // Trigger GR timer for agents which went down permanently.
     BOOST_FOREACH(test::NetworkAgentMock *agent, n_down_from_agents_) {
@@ -1761,7 +1833,7 @@ void GracefulRestartTest::GracefulRestartTestRun () {
         FireGRTimer(bgp_server_peers_[peer->id()]);
     }
 
-    VerifyReceivedXmppRoutes(total_routes);
+    VerifyReceivedXmppRoutes(total_xmpp_routes + total_bgp_routes);
     VerifyDeletedRoutingInstnaces(instances_to_delete_before_gr_);
     VerifyDeletedRoutingInstnaces(instances_to_delete_during_gr_);
 }
@@ -1771,7 +1843,9 @@ void GracefulRestartTest::GracefulRestartTestRun () {
             ValuesIn(GetRouteParameters()),                         \
             ValuesIn(GetAgentParameters()),                         \
             ValuesIn(GetPeerParameters()),                          \
-            ValuesIn(GetTargetParameters()))                        \
+            ValuesIn(GetTargetParameters()),                        \
+            ::testing::Bool(),                                      \
+            ::testing::Bool())
 
 
 INSTANTIATE_TEST_CASE_P(GracefulRestartTestWithParams, GracefulRestartTest,

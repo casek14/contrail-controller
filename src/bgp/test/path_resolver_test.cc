@@ -504,13 +504,19 @@ protected:
     }
 
     void DisableResolverNexthopRegUnregProcessing(const string &instance) {
-        BgpTable *table = GetTable(instance);
-        table->path_resolver()->DisableResolverNexthopRegUnregProcessing();
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        task_util::TaskFire(
+            boost::bind(&PathResolver::DisableResolverNexthopRegUnregProcessing,
+                resolver),
+            "bgp::Config");
     }
 
     void EnableResolverNexthopRegUnregProcessing(const string &instance) {
-        BgpTable *table = GetTable(instance);
-        table->path_resolver()->EnableResolverNexthopRegUnregProcessing();
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        task_util::TaskFire(
+            boost::bind(&PathResolver::EnableResolverNexthopRegUnregProcessing,
+                resolver),
+            "bgp::Config");
     }
 
     size_t ResolverNexthopRegUnregListSize(const string &instance) {
@@ -519,13 +525,19 @@ protected:
     }
 
     void DisableResolverNexthopUpdateProcessing(const string &instance) {
-        BgpTable *table = GetTable(instance);
-        table->path_resolver()->DisableResolverNexthopUpdateProcessing();
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        task_util::TaskFire(
+            boost::bind(&PathResolver::DisableResolverNexthopUpdateProcessing,
+                resolver),
+            "bgp::Config");
     }
 
     void EnableResolverNexthopUpdateProcessing(const string &instance) {
-        BgpTable *table = GetTable(instance);
-        table->path_resolver()->EnableResolverNexthopUpdateProcessing();
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        task_util::TaskFire(
+            boost::bind(&PathResolver::EnableResolverNexthopUpdateProcessing,
+                resolver),
+            "bgp::Config");
     }
 
     size_t ResolverNexthopUpdateListSize(const string &instance) {
@@ -534,13 +546,29 @@ protected:
     }
 
     void DisableResolverPathUpdateProcessing(const string &instance) {
-        BgpTable *table = GetTable(instance);
-        table->path_resolver()->DisableResolverPathUpdateProcessing();
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        task_util::TaskFire(
+            boost::bind(&PathResolver::DisableResolverPathUpdateProcessing,
+                resolver),
+            "bgp::Config");
     }
 
     void EnableResolverPathUpdateProcessing(const string &instance) {
-        BgpTable *table = GetTable(instance);
-        table->path_resolver()->EnableResolverPathUpdateProcessing();
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        task_util::TaskFire(
+            boost::bind(&PathResolver::EnableResolverPathUpdateProcessing,
+                resolver),
+            "bgp::Config");
+    }
+
+    void DisableResolverPathUpdateProcessingInline(const string &instance) {
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        resolver->DisableResolverPathUpdateProcessing();
+    }
+
+    void EnableResolverPathUpdateProcessingInline(const string &instance) {
+        PathResolver *resolver = GetTable(instance)->path_resolver();
+        resolver->EnableResolverPathUpdateProcessing();
     }
 
     void PauseResolverPathUpdateProcessing(const string &instance) {
@@ -2551,7 +2579,7 @@ TYPED_TEST(PathResolverTest, Shutdown3) {
         this->BuildHostAddress(bgp_peer2->ToString()));
 
     task_util::WaitForIdle();
-    this->DisableResolverPathUpdateProcessing("blue");
+    this->DisableResolverPathUpdateProcessingInline("blue");
 
     this->DeleteBgpPath(bgp_peer1, "blue", this->BuildPrefix(1));
     this->DeleteBgpPath(bgp_peer2, "blue", this->BuildPrefix(1));
@@ -2566,9 +2594,9 @@ TYPED_TEST(PathResolverTest, Shutdown3) {
     // creation of bgp::ResolverNexthop task which runs and triggers the
     // creation of bgp::Config task, which in turn destroys PathResolver.
     // If this sequence happens before all the bgp::ResolverPath tasks
-    // are created, then would be accessing freed memory.
+    // are created, then we would be accessing freed memory.
     TaskScheduler::GetInstance()->Stop();
-    this->EnableResolverPathUpdateProcessing("blue");
+    this->EnableResolverPathUpdateProcessingInline("blue");
     TaskScheduler::GetInstance()->Start();
 
     TASK_UTIL_EXPECT_EQ(0, bgp_server->routing_instance_mgr()->count());
@@ -2643,7 +2671,7 @@ TYPED_TEST(PathResolverTest, Shutdown5) {
     // creation of bgp::ResolverNexthop task which runs and triggers the
     // creation of bgp::Config task, which in turn destroys PathResolver.
     // If this sequence happens before all the bgp::ResolverPath tasks
-    // are resumed, then would be accessing freed memory.
+    // are resumed, then we would be accessing freed memory.
     TaskScheduler::GetInstance()->Stop();
     this->ResumeResolverPathUpdateProcessing("blue");
     TaskScheduler::GetInstance()->Start();
