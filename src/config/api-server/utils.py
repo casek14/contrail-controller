@@ -206,6 +206,12 @@ def parse_args(args_str):
         help="List of cassandra servers in IP Address:Port format",
         nargs='+')
     parser.add_argument(
+        "--cassandra_use_ssl", action="store_true",
+        help="Enable TLS for cassandra connection")
+    parser.add_argument(
+        "--cassandra_ca_certs",
+        help="Cassandra CA certs")
+    parser.add_argument(
         "--disc_server_ip",
         help="IP address of discovery server")
     parser.add_argument(
@@ -387,6 +393,7 @@ def parse_args(args_str):
     if isinstance(args_obj.override_rpf_default_by, (str, )):
         VirtualNetworkServer.rpf_default = rpf_valid_values.get(
             args_obj.override_rpf_default_by.lower())
+    args_obj.cassandra_use_ssl = (str(args_obj.cassandra_use_ssl).lower() == 'true')
 
     return args_obj, remaining_argv
 # end parse_args
