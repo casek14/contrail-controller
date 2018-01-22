@@ -684,9 +684,9 @@ env.Alias('controller/src/bgp:test', [
 flaky_test_suite = [
     bgp_peer_close_gr_test,
     bgp_xmpp_basic_test,
-    graceful_restart_flap_all_test,
-    graceful_restart_flap_some_test,
-    graceful_restart_instance_config_test,
+    #graceful_restart_flap_all_test,
+    #graceful_restart_flap_some_test,
+    #graceful_restart_instance_config_test,
     graceful_restart_flaky_tests,
 ]
 
