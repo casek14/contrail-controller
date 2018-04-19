@@ -2160,7 +2160,7 @@ class DBInterface(object):
                 'binding:vnic_type' in port_q and port_q['binding:vnic_type'] == 'baremetal')
             if not allowed_port:
                 port_bindings = port_obj.get_virtual_machine_interface_bindings()
-                kvps = port_bindings.get_key_value_pair()
+                kvps = port_bindings.get_key_value_pair() if port_bindings else []
                 for kvp in kvps:
                     if kvp.key == 'host_id' and kvp.value == "null":
                         allowed_port = True
