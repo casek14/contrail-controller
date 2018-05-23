@@ -164,3 +164,7 @@ class DatabaseEventManager(EventManager):
 
     def get_package_name(self):
         return self.node_type
+
+    def process(self):
+        self.cassandra_mgr.process(self)
+    # end process
