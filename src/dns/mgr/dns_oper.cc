@@ -490,7 +490,7 @@ VirtualDnsRecordConfig::VirtualDnsRecordConfig(const std::string &name,
                                                const DnsItem &item)
       : DnsConfig(name), rec_(item), virt_dns_(NULL),
         src_(VirtualDnsRecordConfig::Agent) {
-    virt_dns_rec_config_.insert(DataPair(GetName(), this));
+    virt_dns_rec_config_.insert(DataPair(GetName() + item.from_name, this));
     virt_dns_ = VirtualDnsConfig::Find(vdns_name);
     if (!virt_dns_) {
         virt_dns_ = new VirtualDnsConfig(vdns_name);
@@ -500,7 +500,7 @@ VirtualDnsRecordConfig::VirtualDnsRecordConfig(const std::string &name,
 }
 
 VirtualDnsRecordConfig::~VirtualDnsRecordConfig() {
-    virt_dns_rec_config_.erase(name_);
+    virt_dns_rec_config_.erase(name_ + rec_.from_name);
 }
 
 void VirtualDnsRecordConfig::OnAdd(IFMapNode *node) {
@@ -612,7 +612,8 @@ bool VirtualDnsRecordConfig::CanNotify() {
 bool VirtualDnsRecordConfig::HasChanged(DnsItem &rhs) {
     if (rec_.name == rhs.name && rec_.type == rhs.type &&
         rec_.eclass == rhs.eclass && rec_.data == rhs.data &&
-        rec_.ttl == rhs.ttl && rec_.priority == rhs.priority)
+        rec_.ttl == rhs.ttl && rec_.priority == rhs.priority &&
+        rec_.from_name == rhs.from_name)
         return false;
     return true;
 }
@@ -620,7 +621,8 @@ bool VirtualDnsRecordConfig::HasChanged(DnsItem &rhs) {
 bool VirtualDnsRecordConfig::OnlyTtlChange(DnsItem &rhs) {
     if (rec_.name == rhs.name && rec_.type == rhs.type &&
         rec_.eclass == rhs.eclass && rec_.data == rhs.data &&
-        rec_.ttl != rhs.ttl && rec_.priority == rhs.priority)
+        rec_.ttl != rhs.ttl && rec_.priority == rhs.priority &&
+        rec_.from_name == rhs.from_name)
         return true;
     return false;
 }
