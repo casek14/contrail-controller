@@ -26,6 +26,7 @@ class LoadbalancerSM(DBBaseSM):
 
     def __init__(self, uuid, obj_dict=None):
         self.uuid = uuid
+        self.device_owner = None
         self.virtual_machine_interface = None
         self.service_instance = None
         self.loadbalancer_listeners = set()
@@ -48,6 +49,9 @@ class LoadbalancerSM(DBBaseSM):
         self.update_single_ref('virtual_machine_interface', obj)
         self.update_single_ref('service_instance', obj)
         self.update_multiple_refs('loadbalancer_listener', obj)
+        if self.virtual_machine_interface:
+            vmi_obj = VirtualMachineInterfaceSM(self.virtual_machine_interface)
+            self.device_owner = vmi_obj.device_owner
     # end update
 
     def add(self):
@@ -134,9 +138,10 @@ class LoadbalancerPoolSM(DBBaseSM):
         self.loadbalancer_version = "v1"
         self.last_sent = None
         self.custom_attributes = []
-        self.lb_fips = []
+        self.lb_fips = {}
         self.lb_instance_ips = []
         self.lb_floating_ips = []
+        self.member_vmis = {}
         self.listener_port = 0
         self.update(obj_dict)
     # end __init__
@@ -148,6 +153,7 @@ class LoadbalancerPoolSM(DBBaseSM):
         self.fq_name = obj['fq_name']
         self.params = obj.get('loadbalancer_pool_properties', None)
         self.provider = obj.get('loadbalancer_pool_provider', None)
+        self.annotations = obj.get('annotations', None)
         kvpairs = obj.get('loadbalancer_pool_custom_attributes', None)
         if kvpairs:
             self.custom_attributes = kvpairs.get('key_value_pair', [])
@@ -442,6 +448,7 @@ class VirtualMachineInterfaceSM(DBBaseSM):
 
     def __init__(self, uuid, obj_dict=None):
         self.uuid = uuid
+        self.device_owner = None
         self.params = None
         self.if_type = None
         self.virtual_ip = None
@@ -472,6 +479,7 @@ class VirtualMachineInterfaceSM(DBBaseSM):
             obj = self.read_obj(self.uuid)
         self.name = obj['fq_name'][-1]
         self.fq_name = obj['fq_name']
+        self.device_owner = obj.get('virtual_machine_interface_device_owner')
         if obj.get('virtual_machine_interface_properties', None):
             self.params = obj['virtual_machine_interface_properties']
             self.if_type = self.params.get('service_interface_type', None)
