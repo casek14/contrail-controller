@@ -123,6 +123,7 @@ def parse_args(args_str):
         'cafile': '',
         'auth_type': 'password',
         'auth_url': '',
+        'keystone_sync_on_demand': True,
     }
 
     # cassandra options
@@ -179,6 +180,9 @@ def parse_args(args_str):
                 secopts.update(dict(config.items("SECURITY")))
         if 'KEYSTONE' in config.sections():
             ksopts.update(dict(config.items("KEYSTONE")))
+            if 'keystone_sync_on_demand' in config.options('KEYSTONE'):
+                ksopts['keystone_sync_on_demand'] = config.getboolean(
+                    'KEYSTONE', 'keystone_sync_on_demand')
         if 'QUOTA' in config.sections():
             for (k, v) in config.items("QUOTA"):
                 try:
