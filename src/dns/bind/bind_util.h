@@ -156,7 +156,6 @@ struct DnsItem {
     uint16_t data_offset; // offset from where rest of data exists
     std::string name;
     std::string data;
-    std::string from_name;     // SMATOV: field to match records on server side
     DnsSOAData soa;
     DnsSRVData srv;
 
@@ -166,8 +165,7 @@ struct DnsItem {
     std::string ToString() const;
 
     bool operator ==(const DnsItem &rhs) const {
-        if (eclass == rhs.eclass && type == rhs.type &&
-            from_name == rhs.from_name &&
+        if (eclass == rhs.eclass && type == rhs.type && 
             name == rhs.name && data == rhs.data && soa == rhs.soa)
             return true;
         return false;
@@ -183,7 +181,6 @@ struct DnsItem {
         if ((rhs.eclass == DNS_CLASS_ANY || rhs.eclass == DNS_CLASS_NONE) &&
             (rhs.type == DNS_TYPE_ANY || type == rhs.type) &&
             (name == rhs.name) &&
-            (from_name == rhs.from_name) &&
             (rhs.data.size() == 0 || data == rhs.data))
             return true;
         return false;

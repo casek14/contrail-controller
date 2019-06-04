@@ -44,13 +44,6 @@ void DnsAgentXmppChannel::ReceiveReq(const XmppStanza::XmppMessage *msg) {
     if (msg && msg->type == XmppStanza::IQ_STANZA) {
         XmlBase *impl = msg->dom.get();
         XmlPugi *pugi = reinterpret_cast<XmlPugi *>(impl);
-        std::string iq_name = pugi->ReadNode("iq");
-        std::string name_attr = pugi->ReadAttrib("from");
-        std::size_t pos = name_attr.find("/");
-        std::string from_name;
-        if (pos > 0) {
-            from_name = name_attr.substr(0,pos);
-        }
         pugi::xml_node node = pugi->FindNode("dns");
         DnsAgentXmpp::XmppType type;
         uint32_t xid;
@@ -59,10 +52,6 @@ void DnsAgentXmppChannel::ReceiveReq(const XmppStanza::XmppMessage *msg) {
         DnsUpdateData *data = rcv_data.get();
         if (DnsAgentXmpp::DnsAgentXmppDecode(node, type, xid, code, data)) {
             if (type == DnsAgentXmpp::Update) {
-               for (DnsItems::iterator it = data->items.begin();
-                    it != data->items.end(); ++it) {
-                    (*it).from_name = from_name;
-                }
                 HandleAgentUpdate(rcv_data);
             }
         }
