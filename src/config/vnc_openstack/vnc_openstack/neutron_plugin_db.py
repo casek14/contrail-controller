@@ -4548,8 +4548,8 @@ class DBInterface(object):
             if not self._filters_is_present(filters, 'mac_address',
                                             neutron_port['mac_address']):
                 continue
-            if not self._filters_is_present(filters, 'mac_address',
-                                            neutron_port['mac_address']):
+            if not self._filters_is_present(filters, 'status',
+                                            neutron_port['status']):
                 continue
 
             ret_list.append(neutron_port)

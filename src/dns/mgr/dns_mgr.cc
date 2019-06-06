@@ -136,6 +136,7 @@ void DnsManager::ProcessAgentUpdate(BindUtil::Operation event,
             if (!config) {
                 config = new VirtualDnsRecordConfig(name, vdns_name, item);
             }
+            config->rec_.source_name = item.source_name;
             config->OnAdd();
             break;
 
@@ -145,7 +146,7 @@ void DnsManager::ProcessAgentUpdate(BindUtil::Operation event,
             break;
 
         case BindUtil::DELETE_UPDATE:
-            if (config) {
+            if (config && (config->rec_.source_name == item.source_name)) {
                 config->OnDelete();
                 delete config;
             }
